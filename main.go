@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	flag "github.com/jessevdk/go-flags"
 	mgo "gopkg.in/mgo.v2"
@@ -48,34 +49,43 @@ func genDoc(key int64) map[string]interface{} {
 	return doc
 }
 
-func run(options Options) error {
+func newConn(options Options) (*mgo.Collection, error) {
 	s, err := mgo.Dial(options.Host)
 	if err != nil {
 		fmt.Println("Error dialing Mongo host", err)
-		return err
+		return nil, err
 	}
 	db := s.DB(options.DBName)
-	c := db.C(options.Collection)
-	err = c.EnsureIndex(mgo.Index{Key: []string{"key"}})
-	if err != nil {
-		fmt.Println("Error creating index", err)
-		return err
-	}
+	return db.C(options.Collection), nil
+}
+
+func run(options Options) error {
+	//c, err := newConn(options)
+	//if err != nil {
+	//	return err
+	//}
+	//err = c.EnsureIndex(mgo.Index{Key: []string{"key"}})
+	//if err != nil {
+	//	fmt.Println("Error creating index", err)
+	//	return err
+	//}
 	var counter int64
 	var insertCounter int64 = 1
 	var wg sync.WaitGroup
 	for i := 0; i < int(options.Concurrency); i++ {
 		wg.Add(1)
 		fmt.Println("spawning worker")
-		go worker(c, &counter, &insertCounter, &wg, options)
+		go worker(&counter, &insertCounter, &wg, options)
 	}
 	wg.Wait()
 	fmt.Printf("Executed %d ops (%d inserts)\n", counter, insertCounter)
 	return nil
 }
 
-func worker(c *mgo.Collection, counter *int64, insertCounter *int64, wg *sync.WaitGroup, options Options) {
+func worker(counter *int64, insertCounter *int64, wg *sync.WaitGroup, options Options) {
+	c, _ := newConn(options)
 	for atomic.LoadInt64(counter) < options.Ops {
+		st := time.Now()
 		op := rand.Float64() < options.Mix
 		var opName string
 		if op {
@@ -90,7 +100,7 @@ func worker(c *mgo.Collection, counter *int64, insertCounter *int64, wg *sync.Wa
 		}
 		v := atomic.AddInt64(counter, 1)
 		if !options.Silent {
-			fmt.Println(v, opName)
+			fmt.Println(v, time.Now().Sub(st).Nanoseconds(), opName)
 		}
 	}
 	wg.Done()
